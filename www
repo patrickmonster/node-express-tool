@@ -4,87 +4,126 @@
  * Module dependencies.
  */
 
-var app = require('../app');
-var debug = require('debug')('twitch-bot:server');
-var http = require('http');
+const cluster = require('cluster');
+const os = require('os');
 
 /**
  * Get port from environment and store in Express.
  */
 
 var port = normalizePort(process.env.PORT || '3000');
-app.set('port', port);
+console.log(`select port by ${port}`);
 
-/**
- * Create HTTP server.
- */
-
-var server = http.createServer(app);
-
-/**
- * Listen on provided port, on all network interfaces.
- */
-
-server.listen(port);
-server.on('error', onError);
-server.on('listening', onListening);
 
 /**
  * Normalize a port into a number, string, or false.
  */
 
-function normalizePort(val) {
-  var port = parseInt(val, 10);
+    function normalizePort(val) {
+    var port = parseInt(val, 10);
 
-  if (isNaN(port)) {
-    // named pipe
-    return val;
-  }
+    if (isNaN(port)) {
+        // named pipe
+        return val;
+    }
 
-  if (port >= 0) {
-    // port number
-    return port;
-  }
+    if (port >= 0) {
+        // port number
+        return port;
+    }
 
-  return false;
+    return false;
 }
 
-/**
- * Event listener for HTTP server "error" event.
- */
+const cpu_count = os.cpus().length;
+let worker_count = cpu_count / 2;
+const instance_id = "0000";
+// 서버관리
+if(worker_count < 10) worker_count = 10;
+if(cluster.isMaster){
+    console.log(`Server ID :: ${instance_id}`);
+    console.log(`Number of server's CPU :: ${cpu_count}`);
+    console.log(`Number of workers to create :: ${worker_count}`);
+    console.log(`Now create total :: ${worker_count} workers...`);
 
-function onError(error) {
-  if (error.syscall !== 'listen') {
-    throw error;
-  }
+    const workerMsgListener = (msg) =>{
+        const worker_id = msg.worker_id;
+        if(msg.cmd == "MASTER_ID"){
+            cluster.workers[worker_id].send({
+                cmd: 'MASTER_ID', master_id : instance_id
+            });
+        }
+    }
 
-  var bind = typeof port === 'string'
-    ? 'Pipe ' + port
-    : 'Port ' + port;
+    for (let i = 0 ; i < worker_count; i++){
+        const worker = cluster.fork();
+        console.log(`Worker is create [${i + 1}/${worker_count}]`);
+        worker.on("message", workerMsgListener);
+    }
 
-  // handle specific listen errors with friendly messages
-  switch (error.code) {
-    case 'EACCES':
-      console.error(bind + ' requires elevated privileges');
-      process.exit(1);
-      break;
-    case 'EADDRINUSE':
-      console.error(bind + ' is already in use');
-      process.exit(1);
-      break;
-    default:
-      throw error;
-  }
-}
+    cluster.on("online", (worker) =>{
+        console.log(`Worker is now online :: ${worker.process.pid}`);
+    });
 
-/**
- * Event listener for HTTP server "listening" event.
- */
+    cluster.on("exit", (deadWorker) =>{
+        console.log(`Workder is dead :: ${deadWorker.process.pid}`);
+        const worker = cluster.fork();
+        console.log(`New worker is created.`);
+        worker.on("message", workerMsgListener);
+    });
+}else if(cluster.isWorker){
+    const app = require('../app');
+    const debug = require('debug')('twitch-web:server');
+    const http = require('http');
+    app.set('port', port);
 
-function onListening() {
-  var addr = server.address();
-  var bind = typeof addr === 'string'
-    ? 'pipe ' + addr
-    : 'port ' + addr.port;
-  debug('Listening on ' + bind);
+    const server = http.createServer(app);
+
+    /**
+     * Listen on provided port, on all network interfaces.
+     */
+
+    server.listen(port);
+    server.on('error', onError);
+    server.on('listening', onListening);
+
+
+    /**
+     * Event listener for HTTP server "error" event.
+     */
+
+    function onError(error) {
+        if (error.syscall !== 'listen') {
+            throw error;
+        }
+
+        var bind = typeof port === 'string' ? 'Pipe ' + port : 'Port ' + port;
+
+        // handle specific listen errors with friendly messages
+        switch (error.code) {
+            case 'EACCES':
+                console.error(bind + ' requires elevated privileges');
+                process.exit(1);
+            break;
+            case 'EADDRINUSE':
+                console.error(bind + ' is already in use');
+                process.exit(1);
+            break;
+            default:
+                throw error;
+        }
+    }
+
+    /**
+     * Event listener for HTTP server "listening" event.
+     */
+
+    function onListening() {
+        var addr = server.address();
+        var bind = typeof addr === 'string'
+            ? 'pipe ' + addr
+            : 'port ' + addr.port;
+        debug('Listening on ' + bind);
+    }
+
 }
